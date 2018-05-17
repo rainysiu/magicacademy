@@ -1,6 +1,6 @@
 pragma solidity ^0.4.18;
 import "./SafeMath.sol";
-import "./JadeAccess.sol";
+import "./OperAccess.sol";
 
 interface ERC20 {
     function totalSupply() public constant returns (uint);
@@ -12,25 +12,24 @@ interface ERC20 {
     event Transfer(address indexed from, address indexed to, uint tokens);
     event Approval(address indexed tokenOwner, address indexed spender, uint tokens);
 }
-// Jade - Crypto Magic Acacedy Game
+// Jade - Crypto MagicAcacedy Game
 // https://www.magicAcademy.io
 
-contract JadeCoin is ERC20, JadeAccess {
+contract JadeCoin is ERC20, OperAccess {
   using SafeMath for SafeMath;
-  string public constant name  = "MAGICACADEMY";
+  string public constant name  = "MAGICACADEMY JADE";
   string public constant symbol = "Jade";
   uint8 public constant decimals = 0;
   uint256 public roughSupply;
   uint256 public totalJadeProduction;
 
-  uint256 public totalEtherPool; // totalEtherJadeResearchPool Eth dividends to be split between players' goo production
   uint256[] public totalJadeProductionSnapshots; // The total goo production for each prior day past
   uint256[] public allocatedJadeResearchSnapshots; // The research eth allocated to each prior day past
-  uint256 public nextSnapshotTime;
 
   // Balances for each player
-  mapping(address => uint256) public ethBalance;
   mapping(address => uint256) public jadeBalance;
+  mapping(address => mapping(uint8 => uint256)) public coinBalance;
+  mapping(uint256 => uint256) totalEtherPool; //Total Pool
   
   mapping(address => mapping(uint256 => uint256)) private jadeProductionSnapshots; // Store player's jade production for given day (snapshot)
   mapping(address => mapping(uint256 => bool)) private jadeProductionZeroedSnapshots; // This isn't great but we need know difference between 0 production and an unused/inactive day.
@@ -46,25 +45,23 @@ contract JadeCoin is ERC20, JadeAccess {
   function JadeCoin() public {
   }
 
-   /// 代币jade的总量
   function totalSupply() public constant returns(uint256) {
-    return roughSupply; // Stored goo (rough supply as it ignores earned/unclaimed goo)
+    return roughSupply; // Stored jade (rough supply as it ignores earned/unclaimed jade)
   }
-  /// 某个玩家的代币余款 in-game
+  /// balance of jade in-game
   function balanceOf(address player) public constant returns(uint256) {
     return SafeMath.add(jadeBalance[player],balanceOfUnclaimed(player));
   }
-  ///还未入账的代币
+  /// unclaimed jade
   function balanceOfUnclaimed(address player) public constant returns (uint256) {
-    uint256 icount;
-    if (lastJadeSaveTime[player] > 0 && lastJadeSaveTime[player] < block.timestamp) { //上一次提取Jade的时间>0 并且小于当前时间
-      icount = SafeMath.mul(getJadeProduction(player),SafeMath.div(SafeMath.sub(block.timestamp,lastJadeSaveTime[player]),60));
-      return icount; //计算累计的未提取代币
+    uint256 lSave = lastJadeSaveTime[player];
+    if (lSave > 0 && lSave < block.timestamp) { 
+      return SafeMath.mul(getJadeProduction(player),SafeMath.div(SafeMath.sub(block.timestamp,lSave),60));
     }
     return 0;
   }
-  
-  /// 获取玩家的物品的每秒产量
+
+  /// production/s
   function getJadeProduction(address player) public constant returns (uint256){
     return jadeProductionSnapshots[player][lastJadeProductionUpdate[player]];
   }
@@ -72,14 +69,14 @@ contract JadeCoin is ERC20, JadeAccess {
   function getlastJadeProductionUpdate(address player) public view returns (uint256) {
     return lastJadeProductionUpdate[player];
   }
-    /// 提升产量 
+    /// increase prodution 
   function increasePlayersJadeProduction(address player, uint256 increase) external onlyAccess {
     jadeProductionSnapshots[player][allocatedJadeResearchSnapshots.length] = SafeMath.add(getJadeProduction(player),increase);
     lastJadeProductionUpdate[player] = allocatedJadeResearchSnapshots.length;
     totalJadeProduction = SafeMath.add(totalJadeProduction,increase);
   }
 
-  /// 降低产量
+  /// reduce production
   function reducePlayersJadeProduction(address player, uint256 decrease) external onlyAccess {
     uint256 previousProduction = getJadeProduction(player);
     uint256 newProduction = SafeMath.sub(previousProduction, decrease);
@@ -94,82 +91,70 @@ contract JadeCoin is ERC20, JadeAccess {
     totalJadeProduction = SafeMath.sub(totalJadeProduction,decrease);
   }
 
-  /// 更新玩家的余额，存储到数组
+  /// update player's jade balance
   function updatePlayersCoin(address player) internal {
     uint256 coinGain = balanceOfUnclaimed(player);
     lastJadeSaveTime[player] = block.timestamp;
-    roughSupply = SafeMath.add(roughSupply,coinGain);  //总产量
-    jadeBalance[player] = SafeMath.add(jadeBalance[player],coinGain);  //玩家所得的代币
+    roughSupply = SafeMath.add(roughSupply,coinGain);  
+    jadeBalance[player] = SafeMath.add(jadeBalance[player],coinGain);  
   }
 
-  /// 更新玩家的余额，存储到数组
+  /// update player's jade balance
   function updatePlayersCoinByOut(address player) external onlyAccess {
     uint256 coinGain = balanceOfUnclaimed(player);
     lastJadeSaveTime[player] = block.timestamp;
-    roughSupply = SafeMath.add(roughSupply,coinGain);  //总产量
-    jadeBalance[player] = SafeMath.add(jadeBalance[player],coinGain);  //玩家所得的代币
+    roughSupply = SafeMath.add(roughSupply,coinGain);  
+    jadeBalance[player] = SafeMath.add(jadeBalance[player],coinGain);  
   }
-
-  /// 某个玩家的ether余款 in-game
-  function etherBalanceOf(address player) external constant returns(uint256) {
-    return ethBalance[player];
-  }
-
-  /// 向某个地址转账代币
+  /// transfer
   function transfer(address recipient, uint256 amount) public returns (bool) {
     updatePlayersCoin(msg.sender);
     require(amount <= jadeBalance[msg.sender]);
     jadeBalance[msg.sender] = SafeMath.sub(jadeBalance[msg.sender],amount);
-    jadeBalance[msg.sender] = SafeMath.add(jadeBalance[recipient],amount);
-        
+    jadeBalance[recipient] = SafeMath.add(jadeBalance[recipient],amount);
     Transfer(msg.sender, recipient, amount);
     return true;
   }
-  /// 发起让player向另一接受者转账
+  /// transferfrom
   function transferFrom(address player, address recipient, uint256 amount) public returns (bool) {
     updatePlayersCoin(player);
-    require(amount <= allowed[player][msg.sender] && amount <= jadeBalance[msg.sender]);
+    require(amount <= allowed[player][msg.sender] && amount <= jadeBalance[player]);
         
-    jadeBalance[player] = SafeMath.sub(jadeBalance[player],amount); //player 的钱减少
-    jadeBalance[player] = SafeMath.add(jadeBalance[player],amount); //接收者钱增加
-    allowed[player][msg.sender] = SafeMath.sub(allowed[player][msg.sender],amount); //被授权操作的人可操作的金额减少
+    jadeBalance[player] = SafeMath.sub(jadeBalance[player],amount); 
+    jadeBalance[recipient] = SafeMath.add(jadeBalance[recipient],amount); 
+    allowed[player][msg.sender] = SafeMath.sub(allowed[player][msg.sender],amount); 
         
-    Transfer(player, recipient, amount);  //转账事件
+    Transfer(player, recipient, amount);  
     return true;
   }
-  /// 授权给授权单位可操作的金额
+  
   function approve(address approvee, uint256 amount) public returns (bool) {
-    allowed[msg.sender][approvee] = amount;  // 授权可操作金额
+    allowed[msg.sender][approvee] = amount;  
     Approval(msg.sender, approvee, amount);
     return true;
   }
-  /// 增加授权单位
+  
   function allowance(address player, address approvee) public constant returns(uint256) {
     return allowed[player][approvee];  
   }
   
-  /// 更新玩家的Jade代币余额，通过出售或者买入方式获得/减少Jade ，更新数组
+  /// update Jade via purchase
   function updatePlayersCoinByPurchase(address player, uint256 purchaseCost) external onlyAccess {
     uint256 unclaimedJade = balanceOfUnclaimed(player);
         
     if (purchaseCost > unclaimedJade) {
-      uint256 coinDecrease = SafeMath.sub(purchaseCost, unclaimedJade);
-      roughSupply = SafeMath.sub(roughSupply,coinDecrease);
-      jadeBalance[player] = SafeMath.sub(jadeBalance[player],coinDecrease);
+      uint256 jadeDecrease = SafeMath.sub(purchaseCost, unclaimedJade);
+      require(jadeBalance[player] >= jadeDecrease);
+      roughSupply = SafeMath.sub(roughSupply,jadeDecrease);
+      jadeBalance[player] = SafeMath.sub(jadeBalance[player],jadeDecrease);
     } else {
-      uint256 coinGain = SafeMath.sub(unclaimedJade,purchaseCost);
-      roughSupply = SafeMath.add(roughSupply,coinGain);
-      jadeBalance[player] = SafeMath.add(jadeBalance[player],coinGain);
+      uint256 jadeGain = SafeMath.sub(unclaimedJade,purchaseCost);
+      roughSupply = SafeMath.add(roughSupply,jadeGain);
+      jadeBalance[player] = SafeMath.add(jadeBalance[player],jadeGain);
     }
         
     lastJadeSaveTime[player] = block.timestamp;
   }
-  /// 提现，提取ether 到自己的账户
-  function withdrawEther(address player, uint256 amount) external {
-    require(amount <= ethBalance[player]);
-    ethBalance[player] = SafeMath.sub(ethBalance[player],amount);
-    player.transfer(amount);
-  } 
 
   function JadeCoinMining(address _addr, uint256 _amount) external onlyOwner {
     roughSupply = SafeMath.add(roughSupply,_amount);
@@ -179,46 +164,44 @@ contract JadeCoin is ERC20, JadeAccess {
   function setRoughSupply(uint256 iroughSupply) external onlyAccess {
     roughSupply = SafeMath.add(roughSupply,iroughSupply);
   }
-  function addJadeCoin(address player, uint256 coin) external onlyAccess {
-    jadeBalance[player] = SafeMath.add(jadeBalance[player],coin);
+  /// balance of coin  in-game
+  function coinBalanceOf(address player,uint8 itype) external constant returns(uint256) {
+    return coinBalance[player][itype];
   }
 
-  function subJadeCoin(address player, uint256 coin) external onlyAccess {
-    jadeBalance[player] = SafeMath.sub(jadeBalance[player],coin);
+  function setJadeCoin(address player, uint256 coin, bool iflag) external onlyAccess {
+    if (iflag) {
+      jadeBalance[player] = SafeMath.add(jadeBalance[player],coin);
+    } else if (!iflag) {
+      jadeBalance[player] = SafeMath.sub(jadeBalance[player],coin);
+    }
   }
-  function setJadeCoinZero(address player) external onlyAccess {
-    jadeBalance[player] = 0;
+  
+  function setCoinBalance(address player, uint256 eth, uint8 itype, bool iflag) external onlyAccess {
+    if (iflag) {
+      coinBalance[player][itype] = SafeMath.add(coinBalance[player][itype],eth);
+    } else if (!iflag) {
+      coinBalance[player][itype] = SafeMath.sub(coinBalance[player][itype],eth);
+    }
   }
-
-  function addEthBalance(address player, uint256 eth) external onlyAccess {
-    ethBalance[player] = SafeMath.add(ethBalance[player],eth);
-  }
-
-  function subEthBalance(address player, uint256 eth) external onlyAccess {
-    ethBalance[player] = SafeMath.sub(ethBalance[player],eth);
-  }
-
 
   function setLastJadeSaveTime(address player) external onlyAccess {
     lastJadeSaveTime[player] = block.timestamp;
   }
 
-  function setNextSnapshotTime(uint256 iTime) external onlyAccess {
-    nextSnapshotTime = iTime;
-  }
-  function getNextSnapshotTime() external view returns (uint256) {
-    return nextSnapshotTime;
-  }
-
-  function addTotalEtherPool(uint256 inEth) external onlyAccess {
-    totalEtherPool = SafeMath.add(totalEtherPool,inEth);
+  function setTotalEtherPool(uint256 inEth, uint8 itype, bool iflag) external onlyAccess {
+    if (iflag) {
+      totalEtherPool[itype] = SafeMath.add(totalEtherPool[itype],inEth);
+     } else if (!iflag) {
+      totalEtherPool[itype] = SafeMath.sub(totalEtherPool[itype],inEth);
+    }
   }
 
-  function subTotalEtherPool(uint256 inEth) external onlyAccess {
-    totalEtherPool = SafeMath.sub(totalEtherPool,inEth);
+  function getTotalEtherPool(uint8 itype) external view returns (uint256) {
+    return totalEtherPool[itype];
   }
 
-  function getTotalEtherPool() external view returns (uint256) {
-    return totalEtherPool;
+  function setJadeCoinZero(address player) external onlyAccess {
+    jadeBalance[player]=0;
   }
 }
